@@ -8,66 +8,67 @@ It drives the real YouTube app through Android's UI automation (ADB and
 [uiautomator2](https://github.com/openatx/uiautomator2)). It doesn't need root,
 doesn't use the YouTube API and never sees your Google password.
 
-Built for a Galaxy S23 Ultra running YouTube 21.38.130 with English UI text.
-Other phones and versions work as long as the labels in `config.toml` match.
+Built for a Galaxy S23 Ultra running YouTube 21.38.130 with English UI text,
+Home feed only.
 
-## 1. Enable wireless debugging on the S23 Ultra
+Everything runs on the phone in Termux. You don't need a PC.
+
+## 1. One-time phone settings
 
 1. **Settings → About phone → Software information** → tap **Build number** 7 times.
-2. **Settings → Developer options** → turn on **Wireless debugging** (and
-   **USB debugging** if you'll use a cable).
-3. Stay on the same Wi-Fi as the computer, or use Termux on the phone (option B).
+2. **Settings → Developer options** → turn on **Wireless debugging**.
+   Wi-Fi has to be on (any network works; it doesn't need internet).
+3. **Settings → Apps → Termux → Battery** → **Unrestricted**. Otherwise One UI
+   kills Termux while YouTube is in front.
 
-## 2a. Option A: run from a PC or Mac (easiest)
+## 2. Install Termux and this project
 
-```bash
-# install adb: https://developer.android.com/tools/releases/platform-tools
-pip install -r requirements.txt
-
-# Developer options → Wireless debugging → "Pair device with pairing code"
-adb pair 192.168.1.23:37xxx        # IP:port and code shown on the phone
-adb connect 192.168.1.23:4xxxx     # IP:port shown on the Wireless debugging screen
-adb devices                        # should list the phone
-```
-
-A USB cable also works: plug it in, accept the prompt, then `adb devices`.
-
-## 2b. Option B: run on the phone only (Termux)
-
-1. Install **Termux** from F-Droid (the Play Store build is outdated).
+1. Install **Termux** from [F-Droid](https://f-droid.org/packages/com.termux/).
+   The Play Store build is outdated and broken.
 2. In Termux:
    ```bash
-   pkg install python android-tools git
-   pip install uiautomator2
-   git clone <this repo> && cd test/youtube-not-interested
+   pkg install -y git
+   git clone https://github.com/vipinmohan11/test.git
+   cd test/youtube-not-interested
+   bash termux-setup.sh
    ```
-3. Split-screen Termux and Settings → Wireless debugging → **Pair device with pairing code**, then:
-   ```bash
-   adb pair localhost:<pairing-port>     # enter the code
-   adb connect localhost:<debug-port>
-   ```
+   If the repo is private, git asks for a username and password. Use a GitHub
+   [personal access token](https://github.com/settings/tokens) as the password.
 
-## 3. Calibrate once, then run
+## 3. Pair Termux with the phone (once per install)
+
+1. Put Termux and Settings side by side (Recent apps → Termux icon → **Open in
+   split screen view**). The pairing code disappears if you switch apps.
+2. Settings → Developer options → **Wireless debugging** → **Pair device with
+   pairing code**. It shows a 6-digit code and `IP:port`.
+3. In Termux: `adb pair localhost:<that port>` and type the code.
+4. Back on the Wireless debugging screen, note the port under **IP address &
+   Port**. It's a different port from the pairing one.
+
+You only pair once. The **connect** port changes every time Wi-Fi or wireless
+debugging turns off and on. `./yt.sh` asks for it when it isn't connected.
+
+## 4. Calibrate once, then run
 
 ```bash
-# Open YouTube on the Home tab, then:
-python yt_not_interested.py dump
+cd ~/test/youtube-not-interested
+./yt.sh dump
 ```
-This saves `dumps/ui-*.xml` plus a screenshot and lists the videos it can see.
-If it says **found 0 video card(s)**, it prints the labels it did find. Put
-them into the `[ui]` section of `config.toml`, or send the XML file for a fix.
+`dump` opens YouTube on the Home tab and saves `dumps/ui-*.xml` plus a
+screenshot. Switch back to Termux to see the list of videos it recognised. If it
+finds 0, send that XML file so the labels can be fixed.
 
 ```bash
-# See what it *would* do, without tapping anything
-python yt_not_interested.py run --dry-run
-
-# Do it for real (stops after max_per_run)
-python yt_not_interested.py run --max 20
+./yt.sh run --dry-run   # opens YouTube, scrolls, prints what it WOULD mark
+./yt.sh run --max 20    # does it for real
 ```
+`run` opens YouTube itself, so start it from Termux and leave the phone alone
+until it finishes. Keep the screen on and unlocked. To stop early, pull down
+the notification shade, open Termux and press **Ctrl+C** (Volume-down + C).
 
 Every video it marks is logged to `marked.jsonl`.
 
-## 4. Choose what to mark: `config.toml`
+## 5. Choose what to mark: `config.toml`
 
 | Setting | What it does |
 |---|---|
@@ -78,9 +79,6 @@ Every video it marks is logged to `marked.jsonl`.
 | `also_dont_recommend_channel` | Use "Don't recommend channel" instead (stronger) |
 | `skip_shorts` | Ignore the Shorts shelf |
 | `delay_min` / `delay_max` | Random pause between taps |
-
-If your phone isn't set to English, translate the `[ui]` labels, for example
-`not_interested_labels = ["Nicht interessiert"]`.
 
 ## Tips
 
@@ -95,5 +93,5 @@ If your phone isn't set to English, translate the `[ui]` labels, for example
 ## Tests
 
 ```bash
-python -m unittest      # offline; no phone needed
+python -m unittest      # offline; no ADB connection needed
 ```

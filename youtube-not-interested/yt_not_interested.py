@@ -5,7 +5,7 @@ Drives the real YouTube Android app over ADB using uiautomator2, so it works
 without root and without touching your Google account credentials.
 
 Usage:
-    python yt_not_interested.py dump                 # save screen + UI tree for calibration
+    python yt_not_interested.py dump                 # open YouTube Home, save screen + UI tree
     python yt_not_interested.py run --dry-run        # show what would be marked, tap nothing
     python yt_not_interested.py run --max 30         # mark up to 30 videos
 """
@@ -204,6 +204,8 @@ def open_home(d):
 
 def cmd_dump(args):
     d = connect(args.serial)
+    if not args.no_launch:
+        open_home(d)
     out = HERE / "dumps"
     out.mkdir(exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
@@ -300,7 +302,8 @@ def main(argv=None):
     p.add_argument("--serial", help="ADB serial or ip:port (default: the only connected device)")
     p.add_argument("--config", default=str(HERE / "config.toml"))
     sub = p.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("dump", help="save a screenshot + UI tree of the current screen")
+    dmp = sub.add_parser("dump", help="open YouTube Home and save a screenshot + UI tree")
+    dmp.add_argument("--no-launch", action="store_true", help="capture whatever screen is open")
     r = sub.add_parser("run", help="scroll the home feed and mark matching videos")
     r.add_argument("--dry-run", action="store_true", help="log decisions without tapping")
     r.add_argument("--max", type=int, help="override max_per_run")
