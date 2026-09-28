@@ -1,3 +1,5 @@
 dumps/
 marked.jsonl
+last-run.log
+subscriptions.json
 __pycache__/

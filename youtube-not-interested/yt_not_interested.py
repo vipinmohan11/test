@@ -6,6 +6,7 @@ without root and without touching your Google account credentials.
 
 Usage:
     python yt_not_interested.py dump                 # open YouTube Home, save screen + UI tree
+    python yt_not_interested.py sync-subs            # save the channels you subscribe to
     python yt_not_interested.py run --dry-run        # show what would be marked, tap nothing
     python yt_not_interested.py run --max 30         # mark up to 30 videos
 """
@@ -14,6 +15,7 @@ import argparse
 import json
 import random
 import re
+import signal
 import sys
 import time
 import tomllib
@@ -24,6 +26,7 @@ from pathlib import Path
 YOUTUBE_PKG = "com.google.android.youtube"
 BOUNDS_RE = re.compile(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]")
 HERE = Path(__file__).resolve().parent
+SUBS_PATH = HERE / "subscriptions.json"
 
 
 # --------------------------------------------------------------------------- config
@@ -37,6 +40,8 @@ class Config:
     mark_everything: bool = False
     also_dont_recommend_channel: bool = False
     skip_shorts: bool = True
+    protect_subscriptions: bool = True
+    subs_refresh_days: float = 7
     max_per_run: int = 25
     max_scrolls: int = 40
     delay_min: float = 1.5
@@ -46,6 +51,13 @@ class Config:
     dont_recommend_labels: list = field(default_factory=lambda: ["Don't recommend channel"])
     video_desc_markers: list = field(default_factory=lambda: ["play video", "views", "watching"])
     shorts_markers: list = field(default_factory=lambda: ["play short", "#shorts"])
+    subscriptions_tab_descs: list = field(default_factory=lambda: ["Subscriptions"])
+    subs_all_labels: list = field(default_factory=lambda: ["All"])
+    subs_ignore_texts: list = field(default_factory=lambda: [
+        "All", "All subscriptions", "Subscriptions", "Manage", "Most relevant", "New activity",
+        "A-Z", "Today", "Videos", "Shorts", "Live", "Posts", "Continue watching", "Unwatched",
+        "New content", "Home", "You", "Search", "Settings",
+    ])
 
     @classmethod
     def load(cls, path):
@@ -145,6 +157,21 @@ def _desc_from_geometry(menu, videos):
     return None
 
 
+def parse_subscription_names(xml, cfg):
+    """Channel names from the Subscriptions > All list: text inside the scrolling list, minus UI labels."""
+    root = ET.fromstring(xml)
+    ignore = {t.lower() for t in cfg.subs_ignore_texts}
+    names = []
+    for lst in root.iter():
+        if lst.get("scrollable") != "true":
+            continue
+        for el in lst.iter():
+            t = (el.get("text") or "").strip()
+            if len(t) >= 2 and t.lower() not in ignore and t not in names:
+                names.append(t)
+    return names
+
+
 # --------------------------------------------------------------------------- rules
 
 def _contains_any(haystack, needles):
@@ -152,13 +179,22 @@ def _contains_any(haystack, needles):
     return next((n for n in needles if n and n.lower() in h), None)
 
 
+def _channel_hit(haystack, names):
+    # Whole-word match, so a channel called "Ted" doesn't match "trusted".
+    h = haystack.lower()
+    for n in names:
+        if n and re.search(r"(?<!\w)" + re.escape(n.lower()) + r"(?!\w)", h):
+            return n
+    return None
+
+
 def decide(description, cfg):
     """Return (should_mark, reason)."""
     if cfg.skip_shorts and _contains_any(description, cfg.shorts_markers):
         return False, "short"
-    if hit := _contains_any(description, cfg.allow_channels + cfg.allow_keywords):
+    if hit := _channel_hit(description, cfg.allow_channels) or _contains_any(description, cfg.allow_keywords):
         return False, f"allowed: {hit}"
-    if hit := _contains_any(description, cfg.block_channels):
+    if hit := _channel_hit(description, cfg.block_channels):
         return True, f"channel: {hit}"
     if hit := _contains_any(description, cfg.block_keywords):
         return True, f"keyword: {hit}"
@@ -202,6 +238,53 @@ def open_home(d):
         time.sleep(2)
 
 
+def sync_subscriptions(d, cfg):
+    print("reading your subscriptions...")
+    d.app_start(YOUTUBE_PKG)
+    time.sleep(4)
+    for desc in cfg.subscriptions_tab_descs:
+        if d(description=desc).exists:
+            d(description=desc).click()
+            break
+    else:
+        raise RuntimeError("couldn't find the Subscriptions tab")
+    time.sleep(3)
+    if not tap_label(d, cfg.subs_all_labels, timeout=4):
+        raise RuntimeError("couldn't find the 'All' button on the Subscriptions tab")
+    time.sleep(3)
+
+    names, stale = [], 0
+    while stale < 3:
+        new = [n for n in parse_subscription_names(d.dump_hierarchy(), cfg) if n not in names]
+        names += new
+        stale = 0 if new else stale + 1
+        d.swipe_ext("up", scale=0.7)
+        time.sleep(1.2)
+    d.press("back")
+    SUBS_PATH.write_text(json.dumps({"updated": time.time(), "channels": names}, indent=1), encoding="utf-8")
+    print(f"saved {len(names)} channel(s) to {SUBS_PATH.name}")
+    return names
+
+
+def load_subscriptions(d, cfg, force=False):
+    if not force and SUBS_PATH.exists():
+        data = json.loads(SUBS_PATH.read_text(encoding="utf-8"))
+        if time.time() - data.get("updated", 0) < cfg.subs_refresh_days * 86400:
+            return data["channels"]
+    try:
+        return sync_subscriptions(d, cfg)
+    except RuntimeError as e:
+        print(f"subscription sync failed: {e}")
+        return json.loads(SUBS_PATH.read_text(encoding="utf-8"))["channels"] if SUBS_PATH.exists() else []
+
+
+def cmd_sync_subs(args):
+    cfg = Config.load(args.config)
+    d = connect(args.serial)
+    for n in load_subscriptions(d, cfg, force=True):
+        print(f"  - {n}")
+
+
 def cmd_dump(args):
     d = connect(args.serial)
     if not args.no_launch:
@@ -234,11 +317,33 @@ def cmd_run(args):
         sys.exit("config has no block_keywords/block_channels and mark_everything=false: nothing to do.")
 
     d = connect(args.serial)
+    if cfg.protect_subscriptions:
+        subs = load_subscriptions(d, cfg)
+        if not subs and cfg.mark_everything:
+            sys.exit("couldn't read your subscriptions, so refusing to mark everything. "
+                     "Run `./yt.sh sync-subs` and send its output.")
+        cfg.allow_channels = cfg.allow_channels + subs
+        print(f"protecting {len(subs)} subscribed channel(s)")
     if not args.no_launch:
         open_home(d)
 
+    # The start/stop button sends SIGTERM; finish the current line and print the summary.
+    signal.signal(signal.SIGTERM, _raise_interrupt)
+    stats = {"marked": 0}
+    try:
+        _run_loop(d, cfg, args, stats)
+    except KeyboardInterrupt:
+        print("\nstopped.")
+    print(f"\ndone. {'would mark' if args.dry_run else 'marked'} {stats['marked']} video(s).")
+
+
+def _raise_interrupt(*_):
+    raise KeyboardInterrupt
+
+
+def _run_loop(d, cfg, args, stats):
     log_path = HERE / "marked.jsonl"
-    seen, marked, scrolls, idle_scrolls = set(), 0, 0, 0
+    seen, scrolls, idle_scrolls = set(), 0, 0
 
     while scrolls < cfg.max_scrolls:
         acted = False
@@ -254,15 +359,15 @@ def cmd_run(args):
             idle_scrolls = 0
             if args.dry_run:
                 print(f"  WOULD [{reason}] {title}")
-                marked += 1
+                stats["marked"] += 1
             elif mark(d, card, cfg):
-                marked += 1
+                stats["marked"] += 1
                 print(f"  MARK  [{reason}] {title}")
                 with open(log_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps({"t": time.time(), "reason": reason, "video": card.description}) + "\n")
             else:
                 print(f"  fail  [{reason}] {title}")
-            if marked >= cfg.max_per_run:
+            if stats["marked"] >= cfg.max_per_run:
                 print(f"\nreached max_per_run={cfg.max_per_run}")
                 return
             if not args.dry_run:
@@ -278,7 +383,6 @@ def cmd_run(args):
         if idle_scrolls >= 15:
             print("\n15 scrolls with nothing to mark; stopping.")
             break
-    print(f"\ndone. {'would mark' if args.dry_run else 'marked'} {marked} video(s).")
 
 
 def mark(d, card, cfg):
@@ -304,12 +408,13 @@ def main(argv=None):
     sub = p.add_subparsers(dest="cmd", required=True)
     dmp = sub.add_parser("dump", help="open YouTube Home and save a screenshot + UI tree")
     dmp.add_argument("--no-launch", action="store_true", help="capture whatever screen is open")
+    sub.add_parser("sync-subs", help="read Subscriptions > All and save the channel list")
     r = sub.add_parser("run", help="scroll the home feed and mark matching videos")
     r.add_argument("--dry-run", action="store_true", help="log decisions without tapping")
     r.add_argument("--max", type=int, help="override max_per_run")
     r.add_argument("--no-launch", action="store_true", help="start from whatever screen is open")
     args = p.parse_args(argv)
-    {"dump": cmd_dump, "run": cmd_run}[args.cmd](args)
+    {"dump": cmd_dump, "run": cmd_run, "sync-subs": cmd_sync_subs}[args.cmd](args)
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@
 
 import unittest
 
-from yt_not_interested import Config, decide, find_cards
+from yt_not_interested import Config, decide, find_cards, parse_subscription_names
 
 FEED_XML = """<?xml version='1.0' encoding='UTF-8'?>
 <hierarchy rotation="0">
@@ -55,6 +55,29 @@ class DecideTest(unittest.TestCase):
 
     def test_no_match(self):
         self.assertFalse(decide("Cooking pasta - play video", self.cfg)[0])
+
+
+SUBS_XML = """<?xml version='1.0' encoding='UTF-8'?>
+<hierarchy rotation="0">
+  <node text="All subscriptions" content-desc="" bounds="[0,100][1440,200]" scrollable="false" clickable="false"/>
+  <node text="" content-desc="" bounds="[0,200][1440,2900]" scrollable="true" clickable="false">
+    <node text="Most relevant" content-desc="" bounds="[0,200][600,300]" scrollable="false" clickable="true"/>
+    <node text="Code Talks" content-desc="" bounds="[200,300][1200,400]" scrollable="false" clickable="false"/>
+    <node text="TED" content-desc="" bounds="[200,400][1200,500]" scrollable="false" clickable="false"/>
+    <node text="Code Talks" content-desc="" bounds="[200,500][1200,600]" scrollable="false" clickable="false"/>
+  </node>
+</hierarchy>"""
+
+
+class SubscriptionsTest(unittest.TestCase):
+    def test_parses_channel_names_only(self):
+        self.assertEqual(parse_subscription_names(SUBS_XML, Config()), ["Code Talks", "TED"])
+
+    def test_subscribed_channel_protected_in_full_reset(self):
+        cfg = Config(mark_everything=True, allow_channels=["TED"])
+        self.assertFalse(decide("Big idea - Go to channel - TED - 1M views - play video", cfg)[0])
+        # Whole-word match: "TED" must not protect a video that says "trusted".
+        self.assertTrue(decide("A trusted guide - Go to channel - Other - play video", cfg)[0])
 
 
 class ConfigTest(unittest.TestCase):
