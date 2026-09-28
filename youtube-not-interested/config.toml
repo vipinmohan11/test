@@ -1,0 +1,33 @@
+# Which videos to mark "Not interested".
+# Matching is case-insensitive and checks the video's accessibility description,
+# which contains the title, channel name, views and upload age.
+
+[rules]
+# Mark videos whose title/description contains any of these.
+block_keywords = ["prank", "reaction", "mrbeast"]
+# Mark every video from these channels.
+block_channels = []
+# Never mark these, even if a block rule matches.
+allow_keywords = []
+allow_channels = []
+# true = mark EVERY video on the home feed except the allow-lists (a hard "reset").
+mark_everything = false
+# true = pick "Don't recommend channel" instead of "Not interested" (stronger signal).
+also_dont_recommend_channel = false
+skip_shorts = true
+
+[limits]
+max_per_run = 25
+max_scrolls = 40
+# Random wait (seconds) between taps, so it behaves like a person.
+delay_min = 1.5
+delay_max = 3.5
+
+[ui]
+# UI labels for YouTube 21.x in English. Change these if your phone uses another
+# language, or if `python yt_not_interested.py dump` shows different names.
+menu_button_descs = ["Action menu", "More actions", "More options"]
+not_interested_labels = ["Not interested"]
+dont_recommend_labels = ["Don't recommend channel"]
+video_desc_markers = ["play video", "views", "watching"]
+shorts_markers = ["play short", "#shorts"]
