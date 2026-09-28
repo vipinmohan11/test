@@ -86,7 +86,21 @@ choose **YouTube Reset**.
 The log of the latest run is in `last-run.log`. Every marked video is appended
 to `marked.jsonl`.
 
-## 6. Settings: `config.toml`
+## 6. Run it once later today (optional)
+
+Instead of tapping the button, you can pick a time. In Termux:
+```bash
+./schedule-once.sh 21:30     # 24-hour time, today only
+./schedule-once.sh status
+./schedule-once.sh cancel    # or tap Cancel in its notification
+```
+At 21:30 it checks whether the phone is unlocked. If it isn't, it keeps
+checking every 5 minutes. Once the phone is unlocked, it warns you 30 seconds
+ahead ("starts in 30 s", with **Cancel**) and then runs exactly like the
+button. It runs once only. If the phone stays locked (or Wireless debugging is
+off) until midnight, it skips and tells you. Nothing carries over to tomorrow.
+
+## 7. Settings: `config.toml`
 
 | Setting | What it does |
 |---|---|
